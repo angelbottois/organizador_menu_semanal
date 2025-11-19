@@ -1,123 +1,129 @@
 import random
 
 def cocinero_disponible(dia, momento, cocinero, restricciones):
+    """
+    Comprueba si un cocinero puede cocinar en un turno,
+    respetando las restricciones.
+    """
+    dia = dia.upper()
+    momento = momento.upper()
+    cocinero = cocinero.upper()
+
     if cocinero not in restricciones:
         return True
-    return (dia, momento) not in restricciones[cocinero]
+
+    # Restricciones normalizadas
+    restr = [(d.upper(), m.upper()) for (d, m) in restricciones[cocinero]]
+    return (dia, momento) not in restr
 
 
 def generar_plan_semanal(semana, momentos, recetas, cocineros, restricciones, personas_menus):
+    """
+    Genera un plan semanal equilibrado usando backtracking,
+    respetando:
+    - restricciones por cocinero
+    - equidad 3–4 turnos por semana
+    - no repetir recetas
+    - no cocinar dos veces el mismo día
+    """
+    # Normalizar claves de cocineros en restricciones
+    restricciones = {c.upper(): [(d.upper(), m.upper()) for d, m in turnos] 
+                     for c, turnos in restricciones.items()}
 
-    # Todos los turnos en orden lineal
-    turnos = [(dia, momento) for dia in semana for momento in momentos]
+    # Todos los turnos en orden
+    turnos = [(dia.upper(), momento.upper()) for dia in semana for momento in momentos]
 
-    # Requisitos de equilibrio
     MIN_VECES = 3
     MAX_VECES = 4
     TURNOS_TOTALES = len(turnos)
 
-    # Contadores iniciales
-    contador = {c: 0 for c in cocineros}
+    # Contador de turnos por cocinero
+    contador = {c.upper(): 0 for c in cocineros}
 
-    # Para evitar cocinar dos veces en el mismo día
-    ya_cocino_hoy = {dia: set() for dia in semana}
+    # Para evitar que un cocinero cocine dos veces el mismo día
+    ya_cocino_hoy = {dia.upper(): set() for dia in semana}
 
-    # Solución parcial
     solucion = {}
 
-    # ------------------------------
-    # BACKTRACKING
-    # ------------------------------
+    # -------------------------------
+    # Backtracking con aleatoriedad filtrada
+    # -------------------------------
     def backtrack(indice):
-        # Caso base: todos los turnos asignados
         if indice == TURNOS_TOTALES:
-            # Comprobamos el mínimo requerido
-            return all(MIN_VECES <= contador[c] <= MAX_VECES for c in cocineros)
+            # Comprobar mínimo y máximo turnos
+            return all(MIN_VECES <= contador[c.upper()] <= MAX_VECES for c in cocineros)
 
         dia, momento = turnos[indice]
 
-        # Candidatos válidos
+        # candidatos válidos
         candidatos = [
             c for c in cocineros
             if cocinero_disponible(dia, momento, c, restricciones)
-            and c not in ya_cocino_hoy[dia]
-            and contador[c] < MAX_VECES
+            and c.upper() not in ya_cocino_hoy[dia]
+            and contador[c.upper()] < MAX_VECES
         ]
 
-        # Heurística: ordenar candidatos por menor carga
-        candidatos.sort(key=lambda c: contador[c])
+        if not candidatos:
+            return False  # No hay candidatos válidos, backtrack
+
+        # Aleatoriedad ligera + priorizar cocineros con menos turnos
+        candidatos.sort(key=lambda c: contador[c.upper()] + random.random()*0.1)
 
         for c in candidatos:
-            # Intenta asignar
-            contador[c] += 1
-            ya_cocino_hoy[dia].add(c)
-
+            contador[c.upper()] += 1
+            ya_cocino_hoy[dia].add(c.upper())
             solucion[(dia, momento)] = c
 
-            # Validación anticipada:
-            # Verificar que los cocineros restantes pueden cumplir el mínimo
+            # Validación anticipada: comprobar si los cocineros pueden alcanzar MIN_VECES
             turnos_restantes = TURNOS_TOTALES - (indice + 1)
+            valido = True
             for coc in cocineros:
-                if contador[coc] < MIN_VECES:
-                    min_necesarios = MIN_VECES - contador[coc]
+                coc_upper = coc.upper()
+                if contador[coc_upper] < MIN_VECES:
+                    min_necesarios = MIN_VECES - contador[coc_upper]
                     if min_necesarios > turnos_restantes:
+                        valido = False
                         break
-            else:
-                # Si la validación no rompe, seguimos
-                if backtrack(indice + 1):
-                    return True
+
+            if valido and backtrack(indice + 1):
+                return True
 
             # Deshacer asignación
-            contador[c] -= 1
-            ya_cocino_hoy[dia].remove(c)
+            contador[c.upper()] -= 1
+            ya_cocino_hoy[dia].remove(c.upper())
             del solucion[(dia, momento)]
 
         return False
 
-    # Ejecutar el backtracking
     exito = backtrack(0)
     if not exito:
-        raise RuntimeError("No se pudo generar un plan válido (muy raro).")
+        raise RuntimeError("No se pudo generar un plan válido.")
 
-    # Construir el plan completo con recetas
+    # -------------------------------
+    # Asignar recetas únicas por cocinero
+    # -------------------------------
     plan = {}
-    recetas_usadas = set()  # NUEVO: para impedir repetir recetas
+    recetas_usadas = set()
 
-    for dia in semana:
-        plan[dia] = {}
-        for momento in momentos:
-            cocinero = solucion[(dia, momento)]
+    for dia, momento in turnos:
+        cocinero = solucion[(dia, momento)]
+        # recetas que puede cocinar ese cocinero
+        recetas_permitidas = [r for r in recetas if r["nombre"] in cocineros[cocinero]]
+        recetas_disponibles = [r for r in recetas_permitidas if r["nombre"] not in recetas_usadas]
 
-            # Recetas permitidas por cocinero
-            recetas_permitidas = [
-                r for r in recetas
-                if r["nombre"] in cocineros[cocinero]
-            ]
+        if not recetas_disponibles:
+            raise RuntimeError(f"No hay recetas únicas disponibles para {cocinero} en {dia} {momento}")
 
-            # Filtrar recetas no usadas aún
-            recetas_disponibles = [
-                r for r in recetas_permitidas
-                if r["nombre"] not in recetas_usadas
-            ]
+        receta = random.choice(recetas_disponibles)
+        recetas_usadas.add(receta["nombre"])
 
-            # Si no quedan recetas disponibles → no hay solución, backtracking
-            if not recetas_disponibles:
-                raise RuntimeError(
-                    f"No hay recetas únicas disponibles para {cocinero} en {dia} {momento}"
-                )
-
-            # Elegimos una receta disponible
-            receta = random.choice(recetas_disponibles)
-
-            # Marcar como usada
-            recetas_usadas.add(receta["nombre"])
-
-            # Guardar en el plan semanal
-            plan[dia][momento] = {
-                "receta": receta["nombre"],
-                "cocinero": cocinero,
-                "ingredientes": receta["ingredientes"],
-                "personas": personas_menus[(dia, momento)]
-            }
+        if dia not in plan:
+            plan[dia] = {}
+        plan[dia][momento] = {
+            "receta": receta["nombre"],
+            "cocinero": cocinero,
+            "ingredientes": receta.get("ingredientes", []),
+            "personas": personas_menus[(dia, momento)]
+        }
 
     return plan
